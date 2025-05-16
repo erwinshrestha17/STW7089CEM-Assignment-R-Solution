@@ -1,0 +1,1014 @@
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+0.  Setup This chunk installs and loads the necessary R packages for the analysis. It uses the pacman package to manage other packages. It also sets a default theme for ggplot2 plots.
+
+```{r}
+# --- 0. Setup ---
+
+# Install and load necessary libraries
+# Use pacman to manage packages (install if needed)
+if (!requireNamespace("pacman", quietly = TRUE)) {
+  install.packages("pacman") # Install pacman if it's not already installed
+}
+
+# Load required packages using pacman's p_load function
+# This function installs the package if it's missing and then loads it
+pacman::p_load(
+  ggplot2,    # For creating graphics
+  corrplot,   # For visualizing correlation matrices
+  lmtest,     # For diagnostic tests for linear models
+  qqplotr,    # For creating Q-Q plots with ggplot2
+  coda,       # For output analysis and diagnostics for MCMC
+  e1071,      # For functions for latent class analysis, short time Fourier transform, fuzzy clustering, support vector machines, etc.
+  caret,      # For classification and regression training
+  MASS,       # For functions and datasets from the book "Modern Applied Statistics with S"
+  dplyr,      # For data manipulation (part of tidyverse)
+  tidyr,      # For tidying data (part of tidyverse)
+  gridExtra   # For arranging multiple grid-based plots
+)
+
+# Set a consistent theme for ggplot2 plots
+theme_set(theme_minimal()) # Apply a minimal theme to all subsequent ggplot2 plots
+```
+
+Task 1: Preliminary Data Analysis
+
+1.1 Data Import and Exploration This chunk loads the datasets for independent variables (X), the dependent variable (Y), and the time index. It then assigns appropriate column names and combines X and Y into a single data frame.
+
+```{r}
+# --- Task 1: Preliminary Data Analysis ---
+
+# --- 1.1 Data Import and Exploration ---
+
+# First, we load the dataset which consists of environmental variables (X)
+# and the energy output (Y), along with a time index.
+
+# Load the independent variables (features)
+X_df <- as.matrix(read.csv("Datasets/x.csv", header = FALSE)) # Read X data, convert to matrix
+colnames(X_df) <- c("x1", "x3", "x4", "x5") # Assign column names: Temperature, Ambient Pressure, Relative Humidity, Exhaust Vacuum
+
+# Load the dependent variable (target)
+Y_matrix <- as.matrix(read.csv("Datasets/y.csv", header = FALSE)) # Read Y data, convert to matrix
+colnames(Y_matrix) <- c("x2") # Rename column to x2 (Net hourly electrical energy output)
+
+# Load the time index data
+time_df <- read.csv("Datasets/time.csv", header = FALSE) # Read time data
+colnames(time_df) <- c("Time") # Assign column name
+
+# Combine X and Y into a single data frame for easier analysis
+data_df <- data.frame(X_df, x2 = Y_matrix[, 1]) # Create a data frame with features and the target variable
+```
+
+1.2 Summary and Structure This chunk provides an overview of the combined dataset, including its dimensions, summary statistics, a check for missing values, and a preview of the first few rows.
+
+```{r}
+# --- 1.2 Summary and Structure ---
+
+# Let's get an overview of the dataset.
+
+cat("========================================\n")
+cat("Dataset Overview\n")
+cat("========================================\n")
+cat("Number of Rows: ", nrow(data_df), "\n")    # Display the number of rows
+cat("Number of Columns: ", ncol(data_df), "\n") # Display the number of columns
+
+cat("\n========================================\n")
+cat("Summary Statistics\n")
+cat("========================================\n")
+print(summary(data_df)) # Display summary statistics for each column (min, max, mean, quartiles)
+
+cat("\n========================================\n")
+cat("Missing Values Per Column\n")
+cat("========================================\n")
+print(colSums(is.na(data_df))) # Display the count of missing values for each column
+
+cat("\n========================================\n")
+cat("Preview (First 5 Rows)\n")
+cat("========================================\n")
+print(head(data_df, 5)) # Display the first 5 rows of the dataset
+```
+
+1.3 Time Series Plots This chunk generates aggregated time series plots for each variable in the dataset. It uses a helper function aggregate_by_index (assumed to be defined elsewhere or in your environment) to average data points over specified chunk sizes and plot_time_series_enhanced (also assumed to be defined) for plotting. Note: chunk_size_val needs to be defined in your R Markdown environment for this code to run.
+
+```{r}
+# 1.3 Time Series Plots - Aggregated time series plots for each variable using ggplot2
+
+# Step 1: Define the chunk size for aggregation if it's not already defined.
+# This determines how many consecutive points are averaged to smooth the data.
+if (!exists("chunk_size_val")) {
+  chunk_size_val <- 100  # You can change this number to adjust smoothness
+}
+
+# Step 2: Load required libraries
+if (!requireNamespace("ggplot2", quietly = TRUE)) install.packages("ggplot2")
+if (!requireNamespace("rlang", quietly = TRUE)) install.packages("rlang")
+library(ggplot2)
+library(rlang)  # For tidy evaluation in ggplot
+
+# Step 3: Define a helper function to aggregate data by averaging over chunks
+aggregate_by_index <- function(df, value_col_name, new_aggregated_value_col_name, new_index_col_name, chunk_size) {
+  
+  # Calculate how many full chunks we can get from the data
+  num_chunks <- floor(nrow(df) / chunk_size)
+  
+  # Trim data frame to contain only full chunks (discard leftover rows)
+  df <- df[1:(num_chunks * chunk_size), ]
+  
+  # Create a new index that groups every 'chunk_size' rows into one chunk number
+  df[[new_index_col_name]] <- rep(1:num_chunks, each = chunk_size)
+  
+  # Aggregate the values by chunk using mean (average)
+  agg_df <- aggregate(df[[value_col_name]], by = list(df[[new_index_col_name]]), FUN = mean)
+  
+  # Rename columns of the aggregated data frame
+  names(agg_df) <- c(new_index_col_name, new_aggregated_value_col_name)
+  
+  return(agg_df)
+}
+
+# Step 4: Define a function to generate plots for each variable
+# This function aggregates the data and plots it with ggplot2
+generate_aggregated_plot <- function(var_name, label) {
+  
+  cat(paste0("### Aggregated Time Series Plot: ", label, "\n\n"))  # Print section header
+  
+  # Name for the aggregated value column
+  new_val_col <- paste0(var_name, "_agg")
+  
+  # Aggregate the data for this variable
+  agg_df <- aggregate_by_index(
+    df = data_df,
+    value_col_name = var_name,
+    new_aggregated_value_col_name = new_val_col,
+    new_index_col_name = "index_agg",
+    chunk_size = chunk_size_val
+  )
+  
+  # Create the plot with ggplot2
+  p <- ggplot(agg_df, aes(x = index_agg, y = !!sym(new_val_col))) +  # Use tidy eval to refer to the column
+    geom_line(color = "#2C3E50", linewidth = 1) +  # Line plot with custom color and thickness
+    labs(
+      title = paste0(label, " (", chunk_size_val, "-point average)"),
+      x = "Aggregated Index (Chunks)",
+      y = label
+    ) +
+    theme_minimal(base_size = 13)  # Clean theme with readable font size
+  
+  print(p)  # Display the plot
+  
+  cat("\n\n")  # Add spacing after plot output
+}
+
+# Step 5: List of variables and their descriptive labels
+var_list <- list(
+  x2 = "Net hourly electrical energy output (MW) X2",
+  x1 = "Temperature X1 (°C)",
+  x3 = "Ambient Pressure (millibar) X3",
+  x4 = "Relative Humidity (%) X4",
+  x5 = "Exhaust Vacuum (cm Hg) X5"
+)
+
+# Step 6: Loop through each variable to generate its aggregated plot
+for (v in names(var_list)) {
+  generate_aggregated_plot(v, var_list[[v]])
+}
+
+
+
+```
+
+
+1.4 Distribution for Each Signal This chunk defines a function plot_histogram_with_density and then uses it to plot histograms overlaid with density curves for each variable, showing their distributions.
+
+```{r}
+# --- 1.4 Distribution for Each Signal ---
+
+# Histograms and density plots to understand the distribution of each variable.
+
+# Define a function to plot a histogram with an overlaid density curve
+plot_histogram_with_density <- function(df, variable, var_name, xlab_label = var_name, color_fill = "lightblue", binwidth_val = NULL) {
+  ggplot(df, aes(x = !!sym(variable))) + # Use !!sym() for unquoting the variable name
+    geom_histogram(aes(y = after_stat(density)), binwidth = binwidth_val, fill = color_fill, color = "black", alpha = 0.7) + # Histogram layer
+    geom_density(color = "blue", linewidth = 1) + # Density curve layer
+    labs(title = paste("Distribution of", var_name), x = xlab_label, y = "Density") + # Labels and title
+    theme(plot.title = element_text(hjust = 0.5)) # Center plot title
+}
+
+# Plot distributions for each variable
+plot_histogram_with_density(data_df, "x1", "Temperature (°C)", binwidth_val = 1)
+plot_histogram_with_density(data_df, "x2", "Net hourly electrical energy output (MW)", color_fill = "lightgreen", binwidth_val = 1)
+plot_histogram_with_density(data_df, "x3", "Ambient Pressure (millibar)", color_fill = "lightcoral", binwidth_val = 1)
+plot_histogram_with_density(data_df, "x4", "Relative Humidity (%)", color_fill = "lightsalmon", binwidth_val = 1)
+plot_histogram_with_density(data_df, "x5", "Exhaust Vacuum (cm Hg)", color_fill = "lightcyan", binwidth_val = 1)
+```
+
+1.5 Correlation and Scatter Plots This section first calculates and prints the correlation matrix for all variables in data_df. Then, it visualizes this matrix using corrplot. After that, it generates individual scatter plots to show the relationship between each predictor and the output variable (x2).
+
+```{r}
+# --- 1.5 Correlation and Scatter Plots ---
+
+# Examining linear relationships between variables.
+
+# Calculate the correlation matrix
+corr_matrix <- cor(data_df)
+cat("Correlation Matrix:\n")
+print(corr_matrix) # Print the correlation matrix
+
+# Plot the correlation matrix
+corrplot(
+  corr_matrix,
+  method = "circle",    # Use circles to represent correlation strength
+  tl.cex = 0.8,         # Text label size for variable names
+  type = "upper",       # Display the upper triangle of the matrix
+  order = "hclust",     # Order variables using hierarchical clustering
+  addCoef.col = "black", # Add correlation coefficients to the plot in black
+  number.cex = 0.7      # Size of the correlation coefficients
+)
+```
+
+```{r}
+# --- Arrange scatter plots ---
+# Scatter plots displayed individually
+
+# Plot 1: Temperature (x1) vs. Net hourly electrical energy output (x2)
+plot(data_df$x1, data_df$x2,
+     main = "Temp (x1) vs. Output (x2)",        # Plot title
+     xlab = "Temperature (°C)",                 # X-axis label
+     ylab = "Net hourly output (MW)",           # Y-axis label
+     col = alpha("blue", 0.5),                 # Point color with transparency
+     pch = 19,                                 # Plotting character (solid circle)
+     cex = 0.5                                 # Point size
+)
+```
+
+```{r}
+# Plot 2: Exhaust Vacuum (x5) vs. Net hourly electrical energy output (x2)
+plot(data_df$x5, data_df$x2,
+     main = "Vacuum (x5) vs. Output (x2)",
+     xlab = "Exhaust Vacuum (cm Hg)",
+     ylab = "Net hourly output (MW)",
+     col = alpha("purple", 0.5),
+     pch = 19,
+     cex = 0.5
+)
+```
+
+```{r}
+# Plot 3: Relative Humidity (x4) vs. Net hourly electrical energy output (x2)
+plot(data_df$x4, data_df$x2,
+     main = "Humidity (x4) vs. Output (x2)",
+     xlab = "Relative Humidity (%)",
+     ylab = "Net hourly output (MW)",
+     col = alpha("orange", 0.5),
+     pch = 19,
+     cex = 0.5
+)
+```
+
+```{r}
+# Plot 4: Ambient Pressure (x3) vs. Net hourly electrical energy output (x2)
+plot(data_df$x3, data_df$x2,
+     main = "Pressure (x3) vs. Output (x2)",
+     xlab = "Ambient Pressure (millibar)",
+     ylab = "Net hourly output (MW)",
+     col = alpha("darkgreen", 0.5),
+     pch = 19,
+     cex = 0.5
+)
+```
+
+Task 2: Regression – Modelling the Relationship This task aims to find a suitable mathematical model from five candidates to explain the relationship between the input variables and the net hourly electrical energy output (y = x2).
+
+First, the response variable y_response is defined, and then a list model_definitions is created. This list stores data frames of the predictor variables (and their transformations like squares or cubes) for each of the five candidate models.
+
+```{r}
+# --- Task 2: Regression – Modelling the Relationship ---
+
+# We aim to find a suitable mathematical model (from 5 candidates)
+# explaining the relationship between the input variables and
+# the net hourly electrical energy output (y = x2).
+
+# The candidate models are:
+#   Model 1: y = θ₁·x₄ + θ₂·x₃² + θ_bias
+#   Model 2: y = θ₁·x₄ + θ₂·x₃² + θ₃·x₅ + θ_bias
+#   Model 3: y = θ₁·x₃ + θ₂·x₄ + θ₃·x₅³ + θ_bias
+#   Model 4: y = θ₁·x₄ + θ₂·x₃² + θ₃·x₅³ + θ_bias
+#   Model 5: y = θ₁·x₄ + θ₂·x₁² + θ₃·x₃² + θ_bias
+
+# Define y (response vector)
+y_response <- data_df$x2 # The net hourly electrical energy output
+
+# Define model_data (list of predictor data frames for each model)
+# Each element in the list corresponds to a model and contains
+# the transformed predictor variables for that model.
+model_definitions <- list(
+  model1 = data.frame(x4 = data_df$x4, x3_sq = data_df$x3^2), # Predictors for Model 1
+  model2 = data.frame(x4 = data_df$x4, x3_sq = data_df$x3^2, x5 = data_df$x5), # Predictors for Model 2
+  model3 = data.frame(x3 = data_df$x3, x4 = data_df$x4, x5_cubed = data_df$x5^3), # Predictors for Model 3
+  model4 = data.frame(x4 = data_df$x4, x3_sq = data_df$x3^2, x5_cubed = data_df$x5^3), # Predictors for Model 4
+  model5 = data.frame(x4 = data_df$x4, x1_sq = data_df$x1^2, x3_sq = data_df$x3^2) # Predictors for Model 5
+)
+```
+
+2.1 Estimate Model Parameters ( theta) This chunk defines a function estimate_theta_ols_scaled to estimate model parameters using Ordinary Least Squares (OLS) on scaled predictors. The predictors are scaled (standardized) before fitting. The function handles intercept-only models and cases with insufficient data. It then iterates through each defined model, scales its predictors, estimates the parameters ( hattheta), and stores both the estimated parameters and the processed design matrix (X with intercept and scaled predictors).
+
+```{r}
+# --- 2.1 Estimate Model Parameters (θ) ---
+
+# We use Ordinary Least Squares (OLS) on scaled predictors.
+# θ_hat = (XᵀX)⁻¹ Xᵀy. Lambda is set to 0 for OLS.
+
+lambda_ols_param <- 0 # Setting lambda to 0 for Ordinary Least Squares (no regularization)
+
+# Function to estimate theta using OLS with scaled predictors
+estimate_theta_ols_scaled <- function(X_scaled_no_intercept, y_response_vec, lambda_val) {
+  # Handle intercept-only model (if X_scaled_no_intercept has columns but no rows, or no columns)
+  if (ncol(X_scaled_no_intercept) == 0 && nrow(X_scaled_no_intercept) > 0) {
+    X_final_mat <- matrix(1, nrow = nrow(X_scaled_no_intercept), ncol = 1) # Design matrix for intercept-only
+    colnames(X_final_mat) <- c("(Intercept)")
+  } else if (nrow(X_scaled_no_intercept) > 0) { # Model with predictors
+    X_final_mat <- cbind("(Intercept)" = rep(1, nrow(X_scaled_no_intercept)), X_scaled_no_intercept) # Add intercept column
+  } else { # No data
+     warning("Input X_scaled_no_intercept has 0 rows.")
+     return(NA) # Return NA if no data
+  }
+
+  # Check if there are enough data points for the number of parameters
+  if (nrow(X_final_mat) < ncol(X_final_mat)) {
+    warning(paste0("Skipping OLS - not enough rows (", nrow(X_final_mat),
+                  ") for predictors (", ncol(X_final_mat), ")."))
+    return(NA) # Return NA if not enough data
+  }
+
+  # Calculate theta_hat using the OLS formula with potential regularization (lambda_val)
+  theta_hat <- tryCatch({
+    XtX <- t(X_final_mat) %*% X_final_mat # X transpose X
+    penalty_matrix <- lambda_val * diag(ncol(X_final_mat)) # Penalty matrix for Ridge regression (0 if lambda_val=0)
+    if (ncol(X_final_mat) > 0) penalty_matrix[1,1] <- 0 # Intercept is typically not penalized
+    XtX_reg <- XtX + penalty_matrix # Regularized XtX (or just XtX if lambda_val is 0)
+    
+    # Use Moore-Penrose generalized inverse (ginv) for numerical stability
+    estimated_coeffs <- MASS::ginv(XtX_reg) %*% t(X_final_mat) %*% y_response_vec
+    rownames(estimated_coeffs) <- colnames(X_final_mat) # Assign names to coefficients
+    return(estimated_coeffs)
+  }, error = function(e) {
+    message(paste0("Error calculating theta_hat with OLS: ", e$message))
+    return(NA) # Return NA on error
+  })
+  return(theta_hat)
+}
+
+# Initialize lists to store results for all models
+theta_list_all_models <- list() # To store estimated parameters (theta_hat)
+X_final_processed_list_all_models <- list() # To store the design matrix (X with intercept and scaled predictors)
+
+# Loop through each model definition
+for (model_label in names(model_definitions)) {
+  cat("\nProcessing model:", model_label, "\n")
+  X_raw_current_df <- model_definitions[[model_label]] # Get raw predictors for the current model
+
+  # Skip if model data is null or empty
+  if (is.null(X_raw_current_df) || nrow(X_raw_current_df) == 0) {
+    theta_list_all_models[[model_label]] <- NA
+    X_final_processed_list_all_models[[model_label]] <- NA
+    next
+  }
+  
+  X_raw_current_mat <- as.matrix(X_raw_current_df) # Convert to matrix
+  X_scaled_current_no_int <- matrix(nrow = nrow(X_raw_current_mat), ncol = 0) # Initialize scaled matrix (no intercept yet)
+
+  # Scale predictors if there are any
+  if (ncol(X_raw_current_mat) > 0) {
+    original_colnames <- colnames(X_raw_current_mat) # Store original column names
+    # Assign default column names if missing
+    if (is.null(original_colnames)) {
+        original_colnames <- if(ncol(X_raw_current_mat) == 1 && !is.null(names(X_raw_current_df))) names(X_raw_current_df) else paste0("V", 1:ncol(X_raw_current_mat))
+    }
+    X_scaled_temp_mat <- scale(X_raw_current_mat) # Scale the predictors (center and scale)
+    X_scaled_temp_mat[is.na(X_scaled_temp_mat)] <- 0 # Replace any NA/NaN from scaling (e.g., constant column) with 0
+    X_scaled_current_no_int <- X_scaled_temp_mat
+    colnames(X_scaled_current_no_int) <- original_colnames # Restore column names
+  }
+
+  # Estimate theta_hat for the current model using scaled predictors
+  current_theta_hat_val <- estimate_theta_ols_scaled(X_scaled_current_no_int, y_response, lambda_val = lambda_ols_param)
+  theta_list_all_models[[model_label]] <- current_theta_hat_val # Store estimated theta
+
+  # Store the final processed design matrix (with intercept and scaled predictors)
+  if (!is.null(current_theta_hat_val) && !all(is.na(current_theta_hat_val))) {
+      X_final_processed_list_all_models[[model_label]] <- if (ncol(X_scaled_current_no_int) == 0 && nrow(X_scaled_current_no_int) > 0) {
+          # Design matrix for intercept-only model
+          matrix(1, nrow = nrow(X_scaled_current_no_int), ncol = 1, dimnames = list(NULL, "(Intercept)"))
+      } else if (nrow(X_scaled_current_no_int) > 0) {
+          # Design matrix with intercept and scaled predictors
+          cbind("(Intercept)" = rep(1, nrow(X_scaled_current_no_int)), X_scaled_current_no_int)
+      } else { NA }
+  } else {
+      X_final_processed_list_all_models[[model_label]] <- NA # Store NA if theta estimation failed
+  }
+  cat("Theta_hat for", model_label, "(OLS on scaled predictors):\n"); print(current_theta_hat_val)
+}
+```
+
+2.2 Compute Residual Sum of Squared Errors (RSS) This chunk defines a function compute_rss_func to calculate the RSS. It then iterates through each model, retrieves the estimated parameters ( hattheta) and the processed design matrix, calculates the predicted values (y_pred=X hattheta), and then computes the RSS. The RSS values for all models are stored and printed.
+
+```{r}
+# --- 2.2 Compute Residual Sum of Squared Errors (RSS) ---
+# RSS = Σ(yᵢ - xᵢᵀθ̂)² from i=1 to n
+
+# Function to compute RSS
+compute_rss_func <- function(y_true, y_pred) {
+  if (length(y_true) != length(y_pred)) stop("Length of y_true and y_pred must be the same.")
+  sum((y_true - y_pred)^2, na.rm = TRUE) # Sum of squared differences, remove NA if any
+}
+
+# Calculate RSS for each model
+rss_list_all_models <- lapply(names(model_definitions), function(model_name) {
+  current_theta <- theta_list_all_models[[model_name]]         # Get estimated parameters for the model
+  X_processed_mat <- X_final_processed_list_all_models[[model_name]] # Get the processed design matrix
+
+  # Return NA if parameters or design matrix are NA, or if dimensions don't match
+  if (any(is.na(current_theta)) || any(is.na(X_processed_mat))) return(NA)
+  if (ncol(X_processed_mat) != length(current_theta)) return(NA)
+
+  # Predict y values using Xθ̂
+  y_pred_vals <- tryCatch(X_processed_mat %*% current_theta, error = function(e) NULL)
+  if (is.null(y_pred_vals)) return(NA) # Return NA if prediction fails
+
+  # Compute RSS
+  rss_val <- compute_rss_func(y_response, y_pred_vals)
+  return(rss_val)
+})
+names(rss_list_all_models) <- names(model_definitions) # Assign model names to the RSS list
+
+cat("\n--- Calculated RSS for all models ---\n")
+print(data.frame(Model = names(rss_list_all_models), RSS = unlist(rss_list_all_models))) # Print RSS for all models
+```
+
+2.3 Compute Log-Likelihood and Variance This chunk defines a function compute_loglik_var_func to calculate the log-likelihood and the variance ( hatsigma\^2) of the errors. The variance is calculated as RSS/(n−1) as per assignment instructions. The log-likelihood is then computed using this variance and the RSS. These calculations are performed for each model, and the results are stored and printed.
+
+```{r}
+# --- 2.3 Compute Log-Likelihood and Variance ---
+# Log-likelihood: ln p(D|θ̂) = -n/2 ln(2π) - n/2 ln(σ̂²) - (1/(2σ̂²))RSS
+# Variance: σ̂² = RSS / (n-1)
+
+# Function to compute log-likelihood and variance
+compute_loglik_var_func <- function(rss_val, n_obs, k_params) {
+  # Estimate variance of errors (σ̂²) as RSS / (n-1) based on assignment instruction
+  # Note: A common alternative for σ̂² in regression is RSS / (n - k_params)
+  sigma_sq_est <- rss_val / (n_obs - 1)
+  
+  # If variance is non-positive (e.g., RSS=0 and n=1, or numerical issues), log-likelihood is -Inf
+  if(sigma_sq_est <= 0) return(list(log_likelihood = -Inf, variance = sigma_sq_est))
+  
+  # Calculate log-likelihood
+  log_lik_val <- -(n_obs / 2) * log(2 * pi) - (n_obs / 2) * log(sigma_sq_est) - (1 / (2 * sigma_sq_est)) * rss_val
+  list(log_likelihood = log_lik_val, variance = sigma_sq_est)
+}
+
+# Calculate log-likelihood and variance for each model
+loglik_var_list_all_models <- lapply(names(rss_list_all_models), function(model_name) {
+  rss_val <- rss_list_all_models[[model_name]] # Get RSS for the model
+  # Get the number of estimated parameters (k) for the model (including intercept)
+  k_params_val <- length(theta_list_all_models[[model_name]][!is.na(theta_list_all_models[[model_name]])])
+  
+  if (is.na(rss_val)) return(list(log_likelihood = NA, variance = NA)) # Return NA if RSS is NA
+  
+  results <- compute_loglik_var_func(rss_val, length(y_response), k_params_val)
+  return(results)
+})
+names(loglik_var_list_all_models) <- names(model_definitions) # Assign model names
+
+cat("\n--- Log-Likelihood and Variance for all models ---\n")
+print(data.frame(Model = names(loglik_var_list_all_models),
+                 LogLikelihood = sapply(loglik_var_list_all_models, `[[`, "log_likelihood"),
+                 Variance = sapply(loglik_var_list_all_models, `[[`, "variance"))) # Print results
+```
+
+2.4 Compute AIC and BIC This chunk defines functions to calculate the Akaike Information Criterion (AIC) and Bayesian Information Criterion (BIC). AIC and BIC are then computed for each model using their log-likelihood values and the number of estimated parameters (k). The results are stored and printed.
+
+```{r}
+# --- 2.4 Compute AIC and BIC ---
+# AIC = 2k - 2 ln p(D|θ̂)
+# BIC = k ln(n) - 2 ln p(D|θ̂)
+# where k is the number of estimated parameters.
+
+# Function to compute AIC
+compute_aic_val_func <- function(log_likelihood, k_params) 2 * k_params - 2 * log_likelihood
+
+# Function to compute BIC
+compute_bic_val_func <- function(log_likelihood, k_params, n_obs) k_params * log(n_obs) - 2 * log_likelihood
+
+# Calculate AIC and BIC for each model
+aic_bic_list_all_models <- lapply(names(model_definitions), function(model_name) {
+  log_lik_val <- loglik_var_list_all_models[[model_name]]$log_likelihood # Get log-likelihood
+  theta_vec <- theta_list_all_models[[model_name]] # Get estimated parameters
+  # k_params_val is the number of non-NA estimated parameters (includes intercept)
+  k_params_val <- length(theta_vec[!is.na(theta_vec)])
+  
+  if (is.na(log_lik_val)) return(list(AIC = NA, BIC = NA)) # Return NA if log-likelihood is NA
+  
+  aic_val <- compute_aic_val_func(log_lik_val, k_params_val) # Compute AIC
+  bic_val <- compute_bic_val_func(log_lik_val, k_params_val, length(y_response)) # Compute BIC
+  return(list(AIC = aic_val, BIC = bic_val))
+})
+names(aic_bic_list_all_models) <- names(model_definitions) # Assign model names
+
+cat("\n--- AIC and BIC for all models ---\n")
+print(data.frame(Model = names(aic_bic_list_all_models),
+                 AIC = sapply(aic_bic_list_all_models, `[[`, "AIC"),
+                 BIC = sapply(aic_bic_list_all_models, `[[`, "BIC"))) # Print AIC and BIC
+```
+
+2.5 Checking the Distribution of Model Prediction Errors (Residuals) This chunk defines a function plot_qq_residuals_func to create Q-Q (Quantile-Quantile) plots for model residuals. These plots help assess if the residuals are normally distributed. The chunk then calculates predictions for each model, computes the residuals (y_true−y_pred), and generates a Q-Q plot for each model's residuals.
+
+```{r}
+# --- 2.5 Checking the Distribution of Model Prediction Errors (Residuals) ---
+
+# We use Q-Q plots to check if residuals are normally distributed.
+
+# Function to plot Q-Q plot of residuals
+plot_qq_residuals_func <- function(y_true, y_pred, model_name_str) {
+  residuals_vec <- y_true - y_pred # Calculate residuals
+  p <- ggplot(data.frame(residuals = residuals_vec), aes(sample = residuals)) +
+    stat_qq_point(color = "steelblue", size = 1.5, alpha = 0.5) + # Q-Q plot points
+    stat_qq_line(color = "red", linewidth = 1) +                    # Reference line for normal distribution
+    labs(title = paste("Q-Q Plot of Residuals for", model_name_str), 
+         x = "Theoretical Quantiles", y = "Sample Quantiles") +
+    theme(plot.title = element_text(hjust = 0.5)) # Center plot title
+  print(p) # Print the plot
+}
+
+# Get predictions for all models
+predictions_list_all_models <- lapply(names(model_definitions), function(model_name) {
+  theta_vec <- theta_list_all_models[[model_name]]             # Get parameters
+  X_processed_mat <- X_final_processed_list_all_models[[model_name]] # Get design matrix
+  
+  # Check for NA or dimension mismatch
+  if (any(is.na(theta_vec)) || any(is.na(X_processed_mat)) || ncol(X_processed_mat) != length(theta_vec)) {
+    return(rep(NA, length(y_response))) # Return vector of NAs
+  }
+  # Calculate predictions: Xθ̂
+  tryCatch(X_processed_mat %*% theta_vec, error = function(e) rep(NA, length(y_response)))
+})
+names(predictions_list_all_models) <- names(model_definitions) # Assign model names
+
+# Plot Q-Q residuals for each model
+for (model_name in names(model_definitions)) {
+  preds <- predictions_list_all_models[[model_name]]
+  if (!all(is.na(preds))) { # Check if predictions are not all NA
+    plot_qq_residuals_func(y_response, preds, model_name)
+  } else {
+    cat("Cannot plot Q-Q for", model_name, "due to NA predictions or parameters.\n")
+  }
+}
+```
+
+2.6 Select 'Best' Regression Model This section is intended for the user to interpret the AIC, BIC, and residual plots to select the best model. For the script to proceed, Model 5 is programmatically chosen as the 'best_model_name'. The user should replace the justification text with their own analysis.
+
+```{r}
+# --- 2.6 Select 'Best' Regression Model (Dynamic Version) ---
+
+# Ensure aic_bic_list_all_models is available from section 2.4
+if (!exists("aic_bic_list_all_models")) {
+  stop("Error: The variable 'aic_bic_list_all_models' (from section 2.4) was not found. Please ensure section 2.4 has been run.")
+}
+
+# Extract model names, AIC, and BIC values dynamically
+model_names_dynamic <- names(aic_bic_list_all_models)
+AIC_values_dynamic <- sapply(aic_bic_list_all_models, function(model) model$AIC)
+BIC_values_dynamic <- sapply(aic_bic_list_all_models, function(model) model$BIC)
+
+# Ensure the order of model_names_dynamic matches AIC_values_dynamic and BIC_values_dynamic
+# This should be the case if aic_bic_list_all_models was created with model names as keys
+# For safety, explicitly use names from the sapply output if available and consistent
+if (!is.null(names(AIC_values_dynamic))) {
+    model_names_dynamic <- names(AIC_values_dynamic)
+}
+
+
+# Find the model with the minimum AIC
+# Handle cases where AIC_values_dynamic might contain NA (if some models failed)
+if (all(is.na(AIC_values_dynamic))) {
+    best_model_AIC_dynamic <- NA
+    warning("All AIC values are NA. Cannot determine the best model by AIC.")
+} else {
+    best_model_AIC_dynamic <- model_names_dynamic[which.min(AIC_values_dynamic)]
+}
+
+
+# Find the model with the minimum BIC
+# Handle cases where BIC_values_dynamic might contain NA
+if (all(is.na(BIC_values_dynamic))) {
+    best_model_BIC_dynamic <- NA
+    warning("All BIC values are NA. Cannot determine the best model by BIC.")
+} else {
+    best_model_BIC_dynamic <- model_names_dynamic[which.min(BIC_values_dynamic)]
+}
+
+
+# If both criteria agree (and are not NA), select that model; otherwise decide accordingly
+if (!is.na(best_model_AIC_dynamic) && !is.na(best_model_BIC_dynamic) && best_model_AIC_dynamic == best_model_BIC_dynamic) {
+  best_model_name <- best_model_AIC_dynamic
+} else if (!is.na(best_model_AIC_dynamic)) {
+  # If they differ or BIC is NA, you can choose one or explain the reasoning
+  best_model_name <- best_model_AIC_dynamic  # choosing based on AIC here as a default
+  if (!is.na(best_model_BIC_dynamic) && best_model_AIC_dynamic != best_model_BIC_dynamic) {
+    cat("Note: AIC and BIC suggest different best models. AIC suggests:", best_model_AIC_dynamic, 
+        "and BIC suggests:", best_model_BIC_dynamic, ". Proceeding with AIC choice.\n")
+  }
+} else if (!is.na(best_model_BIC_dynamic)) {
+    # If AIC is NA, but BIC is not
+    best_model_name <- best_model_BIC_dynamic
+    cat("Note: AIC values were NA. Proceeding with BIC choice:", best_model_BIC_dynamic, "\n")
+} else {
+    best_model_name <- NA # Both were NA
+    warning("Could not determine best model as both AIC and BIC criteria resulted in NA choices.")
+}
+
+if (!is.na(best_model_name)) {
+    cat("Selected best model based on dynamic AIC and BIC:", best_model_name, "\n")
+} else {
+    cat("Failed to select a best model due to missing AIC/BIC values.\n")
+    # You might want to assign a default or stop execution if a best model is crucial for subsequent steps
+    # For now, we let 'best_model_name' be NA if no selection could be made.
+    # If subsequent code relies on 'best_model_name' being a valid model string,
+    # you might need to handle this NA case, e.g., by falling back to a default like "model5"
+    # if that's critical for the script to proceed, as hinted in the original comments.
+    # Example fallback:
+    # if(is.na(best_model_name)) {
+    #   best_model_name <- "model5" # Default fallback if selection fails
+    #   cat("Warning: Automatic model selection failed. Defaulting to 'model5' to allow script progression.\n")
+    # }
+}
+
+
+# The following is a placeholder for your detailed justification.
+# You should replace this with your textual analysis based on AIC, BIC,
+# and the Q-Q plots of residuals from section 2.5.
+
+cat("\n--- Model Selection Justification --- \n")
+cat("Based on the information criteria and residual analysis:\n")
+cat(paste("* AIC values indicate that", best_model_AIC_dynamic, "is preferred (AIC:", round(min(AIC_values_dynamic, na.rm=TRUE),2), ").\n"))
+cat(paste("* BIC values indicate that", best_model_BIC_dynamic, "is preferred (BIC:", round(min(BIC_values_dynamic, na.rm=TRUE),2), ").\n"))
+
+if (!is.na(best_model_name)) {
+    cat(paste("* The chosen model for further analysis is:", best_model_name, ".\n"))
+
+} else {
+    cat("* No model could be definitively selected based on the available AIC/BIC data.\n")
+}
+cat("--- End of Justification ---\n")
+
+```
+
+2.7 Train-Test Split and Evaluation of the Best Model This chunk takes the selected 'best model' (model5), splits the data into training (70%) and testing (30%) sets. It then:
+
+Scales the training and testing predictors based only on the training set's mean and standard deviation to prevent data leakage. Estimates the model parameters ( hattheta) using the training data. Makes predictions on the test data. Calculates the 95% confidence intervals for these test predictions. Plots the actual vs. predicted values with CIs for the test set. Calculates RMSE, MAE, and R-squared on the test set. Plots the Q-Q plot for the test set residuals and performs a Shapiro-Wilk test for normality on these residuals. Finally, it stores the OLS coefficients and estimated error variance from the training phase for use in Task 3 (ABC).
+
+```{r}
+# --- 2.7 Train-Test Split and Evaluation of the Best Model ---
+
+# We split the data (70% train, 30% test), fit the chosen best model (Model 5)
+# on the training set, and evaluate its performance on the test set,
+# including 95% confidence intervals for predictions.
+
+# Get the raw predictor data for the selected best model
+X_best_model_raw <- model_definitions[[best_model_name]]
+y_best_model_response <- y_response # Full response vector
+
+# Set seed for reproducibility of the random sampling
+set.seed(42)
+n_total_best <- length(y_best_model_response) # Total number of observations
+train_size_best <- floor(0.70 * n_total_best) # 70% for training
+# Randomly sample indices for the training set
+train_indices_best <- sample(1:n_total_best, train_size_best, replace = FALSE)
+
+# Split data into training and testing sets
+X_train_best_raw <- X_best_model_raw[train_indices_best, , drop = FALSE] # Training predictors (raw)
+X_test_best_raw <- X_best_model_raw[-train_indices_best, , drop = FALSE] # Testing predictors (raw)
+y_train_best <- y_best_model_response[train_indices_best]               # Training response
+y_test_best <- y_best_model_response[-train_indices_best]               # Testing response
+
+# Calculate means and standard deviations from the TRAINING SET ONLY for scaling
+train_means_best <- colMeans(X_train_best_raw, na.rm=TRUE)
+train_sds_best <- apply(X_train_best_raw, 2, sd, na.rm=TRUE)
+train_sds_best[train_sds_best == 0 | is.na(train_sds_best)] <- 1 # Replace 0/NA SDs with 1 to avoid division by zero
+
+# Scale training and test sets using parameters derived from the training set
+X_train_best_scaled <- scale(X_train_best_raw, center = train_means_best, scale = train_sds_best)
+X_test_best_scaled <- scale(X_test_best_raw, center = train_means_best, scale = train_sds_best)
+
+# Convert scaled matrices to data frames
+X_train_best_scaled_df <- as.data.frame(X_train_best_scaled)
+X_test_best_scaled_df <- as.data.frame(X_test_best_scaled)
+
+# Estimate theta_hat for the best model using the SCALED TRAINING data
+theta_hat_best_model_train <- estimate_theta_ols_scaled(as.matrix(X_train_best_scaled_df), y_train_best, lambda_val = lambda_ols_param)
+
+# Prepare test data with intercept for predictions
+X_test_best_bias <- cbind("(Intercept)" = 1, X_test_best_scaled_df)
+# Predict on the SCALED TEST data
+y_pred_test_best <- as.matrix(X_test_best_bias) %*% theta_hat_best_model_train
+
+# --- Calculate Confidence Intervals for Predictions on Test Set ---
+# Prepare training data with intercept for calculating sigma_squared
+X_train_best_bias_for_sigma <- cbind("(Intercept)" = 1, X_train_best_scaled_df)
+y_pred_train_best_for_sigma <- as.matrix(X_train_best_bias_for_sigma) %*% theta_hat_best_model_train
+residuals_train_best_for_sigma <- y_train_best - y_pred_train_best_for_sigma
+# Estimate error variance (σ̂²) from the training residuals
+# df = n_train - k (number of parameters including intercept)
+sigma_squared_best_model_est_train <- sum(residuals_train_best_for_sigma^2) / (nrow(X_train_best_bias_for_sigma) - ncol(X_train_best_bias_for_sigma))
+
+# Covariance matrix of theta_hat: σ̂² * (X_trainᵀX_train)⁻¹
+cov_theta_best_model_train <- sigma_squared_best_model_est_train * MASS::ginv(t(as.matrix(X_train_best_bias_for_sigma)) %*% as.matrix(X_train_best_bias_for_sigma))
+# Standard error of predictions: sqrt(diag(X_test %*% Cov(θ̂) %*% X_testᵀ) + σ̂²)
+se_pred_best_model <- sqrt(diag(as.matrix(X_test_best_bias) %*% cov_theta_best_model_train %*% t(as.matrix(X_test_best_bias))) + sigma_squared_best_model_est_train)
+# T-value for 95% CI
+t_value_best_model_ci <- qt(1 - 0.05 / 2, df = nrow(X_train_best_bias_for_sigma) - ncol(X_train_best_bias_for_sigma))
+
+# Calculate lower and upper bounds of the 95% confidence interval
+lower_bound_best_model <- y_pred_test_best - t_value_best_model_ci * se_pred_best_model
+upper_bound_best_model <- y_pred_test_best + t_value_best_model_ci * se_pred_best_model
+
+# Create a data frame for results
+results_best_model_df <- data.frame(
+  index = 1:length(y_test_best),          # Index for plotting
+  actual = y_test_best,                   # Actual test values
+  predicted = as.vector(y_pred_test_best), # Predicted test values
+  lower_ci = as.vector(lower_bound_best_model), # Lower CI bound
+  upper_ci = as.vector(upper_bound_best_model)  # Upper CI bound
+)
+cat("First few rows of test predictions with CI:\n")
+print(head(results_best_model_df))
+
+# Plot actual vs. predicted values with 95% CI
+p_actual_vs_pred_ci <- ggplot(results_best_model_df, aes(x = index)) +
+  geom_point(aes(y = actual, color = "Actual"), alpha = 0.5, size=0.7) + # Actual values
+  geom_line(aes(y = predicted, color = "Predicted"), linetype = "dashed") + # Predicted values
+  geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci, fill = "95% CI"), alpha = 0.2) + # Confidence interval
+  labs(title = paste(best_model_name, ": Actual vs. Predicted with 95% CI (Test Set)"), y = "Net hourly output") +
+  scale_color_manual(values = c("Actual" = "blue", "Predicted" = "red")) +
+  scale_fill_manual(values = c("95% CI" = "gray")) +
+  theme(plot.title = element_text(hjust = 0.5))
+print(p_actual_vs_pred_ci)
+
+# --- Evaluate Model Performance on Test Set ---
+residuals_test_best <- y_test_best - y_pred_test_best # Test set residuals
+rmse_best <- sqrt(mean(residuals_test_best^2))        # Root Mean Squared Error
+mae_best <- mean(abs(residuals_test_best))           # Mean Absolute Error
+# R-squared: 1 - (RSS_test / TSS_test)
+r_squared_best <- 1 - (sum(residuals_test_best^2) / sum((y_test_best - mean(y_test_best))^2))
+
+cat(paste("\nEvaluation Metrics for", best_model_name, "on Test Set:\n"))
+cat(sprintf("RMSE: %.4f\nMAE: %.4f\nR²: %.4f\n", rmse_best, mae_best, r_squared_best))
+
+# Plot Q-Q of residuals for the test set
+plot_qq_residuals_func(y_test_best, as.vector(y_pred_test_best), paste(best_model_name, "(Test Set Residuals)"))
+
+# Shapiro-Wilk test for normality of residuals (for N between 3 and 5000)
+# If N > 5000, sample 5000 residuals for the test.
+if (length(residuals_test_best) >=3 && length(residuals_test_best) <= 5000 ) {
+    print(shapiro.test(residuals_test_best))
+} else if (length(residuals_test_best) > 5000) {
+    cat("Performing Shapiro-Wilk test on a sample of 5000 residuals due to large dataset.\n")
+    print(shapiro.test(sample(residuals_test_best, 5000)))
+}
+
+# Store OLS coefficients and sigma_squared from the training phase for Task 3 (ABC)
+ols_coefs_for_abc <- as.vector(theta_hat_best_model_train)
+names(ols_coefs_for_abc) <- rownames(theta_hat_best_model_train) # Assign names to the coefficient vector
+ols_sigma_sq_for_abc <- sigma_squared_best_model_est_train # Store estimated error variance
+```
+
+Task 3: Approximate Bayesian Computation (ABC) This task performs Approximate Bayesian Computation (ABC) to estimate the posterior distributions of the two most influential parameters of the selected 'best model' (model5), while keeping other parameters fixed at their OLS estimates.
+
+```{r}
+# --- Task 3: Approximate Bayesian Computation (ABC) ---
+
+cat("\n========================================\n")
+cat("Task 3: Approximate Bayesian Computation (ABC)\n")
+cat("========================================\n")
+
+# 3.1 Identify the two parameters with the largest absolute OLS estimates
+# from the model trained in Task 2.7 (model5 on training data).
+# Other parameters will be fixed at their OLS estimates.
+
+cat("OLS coefficients for the selected model (model5) on scaled training data:\n")
+# ols_coefs_for_abc and ols_sigma_sq_for_abc should be defined at the end of Task 2.7
+print(ols_coefs_for_abc)
+
+# Exclude the intercept to find the two slope coefficients with the largest absolute values
+slope_coefs <- ols_coefs_for_abc[names(ols_coefs_for_abc) != "(Intercept)"]
+sorted_abs_slope_coefs <- sort(abs(slope_coefs), decreasing = TRUE) # Sort by absolute value
+
+# Check if there are at least two slope coefficients
+if (length(sorted_abs_slope_coefs) < 2) {
+  stop("The selected model has fewer than two slope coefficients. ABC task requires selecting two.")
+}
+# Select the names of the top two parameters
+params_for_abc_names <- names(sorted_abs_slope_coefs)[1:2]
+
+cat("\nParameters selected for ABC (largest absolute OLS estimates):\n")
+print(params_for_abc_names)
+
+# Get the OLS estimates for these two parameters
+param1_ols_est <- ols_coefs_for_abc[params_for_abc_names[1]]
+param2_ols_est <- ols_coefs_for_abc[params_for_abc_names[2]]
+
+cat(paste("\nOLS estimate for", params_for_abc_names[1], ":", param1_ols_est, "\n"))
+cat(paste("OLS estimate for", params_for_abc_names[2], ":", param2_ols_est, "\n"))
+
+# Get the OLS estimates for the parameters that will be kept fixed
+fixed_params_ols_est <- ols_coefs_for_abc[!names(ols_coefs_for_abc) %in% params_for_abc_names]
+cat("\nFixed parameters (using OLS estimates from training data):\n")
+print(fixed_params_ols_est)
+
+# Use the full design matrix from the training set (scaled predictors + intercept)
+# X_train_best_bias_for_sigma was defined in Task 2.7
+X_train_full_design_df <- X_train_best_bias_for_sigma
+X_train_full_design_matrix <- as.matrix(X_train_full_design_df)
+
+
+# 3.2 Define Uniform priors for the two selected parameters.
+# The range of the uniform prior is centered around the OLS estimate.
+define_prior_range <- function(ols_est, scale_factor = 1.0) {
+  abs_est <- abs(ols_est)
+  # If OLS estimate is very small, define a default range to avoid an overly narrow prior
+  if (abs_est < 1e-4) { # Check if estimate is close to zero
+    range_val <- 0.5 # Default range if OLS estimate is tiny
+  } else {
+    range_val <- scale_factor * abs_est # Range is proportional to the OLS estimate
+  }
+  return(c(ols_est - range_val, ols_est + range_val)) # [center - range, center + range]
+}
+
+# Define prior ranges for the two parameters selected for ABC
+prior_range_param1 <- define_prior_range(param1_ols_est, scale_factor = 1.0) # Scale factor can be adjusted
+prior_range_param2 <- define_prior_range(param2_ols_est, scale_factor = 1.0)
+
+cat(paste("\nPrior range for", params_for_abc_names[1], ": [", prior_range_param1[1], ",", prior_range_param1[2], "]\n"))
+cat(paste("Prior range for", params_for_abc_names[2], ": [", prior_range_param2[1], ",", prior_range_param2[2], "]\n"))
+
+
+# 3.3 Perform rejection ABC.
+# - Draw samples from the Uniform priors for the two parameters.
+# - Keep other parameters fixed at their OLS estimates.
+# - Calculate RSS for the simulated parameters.
+# - Accept the sample if simulated RSS is less than a tolerance (epsilon).
+
+n_abc_simulations <- 50000 # Number of simulations to run for ABC
+accepted_samples_list <- list() # Use a list to efficiently collect data frames of accepted samples
+
+# Function to calculate RSS (already defined, but can be redefined or called if needed)
+calculate_rss <- function(y_true, y_pred) {
+  sum((y_true - y_pred)^2)
+}
+
+# Calculate the observed RSS from the OLS model on the training data.
+# This will be used to set the tolerance (epsilon).
+# Ensure coefficients are in the same order as columns in X_train_full_design_matrix
+ols_coefs_ordered_for_rss <- ols_coefs_for_abc[colnames(X_train_full_design_matrix)]
+y_pred_train_ols <- X_train_full_design_matrix %*% ols_coefs_ordered_for_rss # Predictions using OLS parameters
+observed_rss_train <- calculate_rss(y_train_best, y_pred_train_ols) # RSS for OLS model on training data
+cat(paste("\nObserved RSS from OLS on training data:", observed_rss_train, "\n"))
+
+# Set the tolerance (epsilon) for ABC: e.g., 105% of the observed RSS
+epsilon <- observed_rss_train * 1.05
+cat(paste("ABC Tolerance epsilon (max RSS for acceptance):", epsilon, "\n"))
+
+# Get all parameter names (including intercept and fixed ones) in the correct order
+all_param_names <- names(ols_coefs_for_abc)
+
+# Initialize progress bar
+pb <- txtProgressBar(min = 0, max = n_abc_simulations, style = 3)
+
+# ABC simulation loop
+for (i in 1:n_abc_simulations) {
+  # Sample the two parameters from their uniform priors
+  sampled_param1 <- runif(1, min = prior_range_param1[1], max = prior_range_param1[2])
+  sampled_param2 <- runif(1, min = prior_range_param2[1], max = prior_range_param2[2])
+
+  # Create a full parameter vector for the current simulation
+  current_theta_abc <- numeric(length(all_param_names))
+  names(current_theta_abc) <- all_param_names
+
+  # Assign sampled values to the two ABC parameters
+  current_theta_abc[params_for_abc_names[1]] <- sampled_param1
+  current_theta_abc[params_for_abc_names[2]] <- sampled_param2
+
+  # Assign fixed OLS estimates to the other parameters
+  for (p_name in names(fixed_params_ols_est)) {
+    current_theta_abc[p_name] <- fixed_params_ols_est[p_name]
+  }
+  
+  # Ensure the parameter vector is in the same order as columns of the design matrix
+  current_theta_abc_ordered <- current_theta_abc[colnames(X_train_full_design_matrix)]
+  
+  # Predict y values using the simulated parameters and training data
+  y_pred_abc <- X_train_full_design_matrix %*% current_theta_abc_ordered
+  # Calculate RSS for the simulated parameters
+  rss_simulated <- calculate_rss(y_train_best, y_pred_abc)
+
+  # Rejection step: accept if simulated RSS is less than epsilon
+  if (rss_simulated < epsilon) {
+    # Store the accepted sample (the two parameters and their RSS)
+    temp_data_list <- list()
+    temp_data_list[[params_for_abc_names[1]]] <- sampled_param1
+    temp_data_list[[params_for_abc_names[2]]] <- sampled_param2
+    temp_data_list[["rss"]] <- rss_simulated
+    accepted_samples_list[[length(accepted_samples_list) + 1]] <- as.data.frame(temp_data_list)
+  }
+  setTxtProgressBar(pb, i) # Update progress bar
+}
+close(pb) # Close progress bar
+
+# Combine all accepted samples from the list into a single data frame
+accepted_samples <- do.call(rbind, accepted_samples_list)
+
+# Check if any samples were accepted
+if (is.null(accepted_samples) || nrow(accepted_samples) == 0) {
+    cat("\nNo samples were accepted. Try increasing n_abc_simulations, widening priors, or increasing epsilon.\n")
+    # Create an empty data frame with correct column names if no samples accepted,
+    # to avoid errors in subsequent plotting code if it expects this data frame.
+    accepted_samples <- data.frame(matrix(ncol = 3, nrow = 0))
+    colnames(accepted_samples) <- c(params_for_abc_names, "rss")
+} else {
+    cat(paste("\nNumber of accepted samples:", nrow(accepted_samples), "out of", n_abc_simulations, "\n"))
+    cat(paste("Acceptance rate:", nrow(accepted_samples) / n_abc_simulations * 100, "%\n"))
+}
+
+
+# 3.4 Plot the joint and marginal posterior distributions of the two parameters.
+if (is.null(accepted_samples) || nrow(accepted_samples) < 2) { # Need at least 2 samples for density plots
+  warning("Too few samples accepted for plotting. Ensure n_abc_simulations is high enough, priors are appropriate, and epsilon is not too strict.")
+} else {
+  param1_label <- params_for_abc_names[1] # Name of the first ABC parameter
+  param2_label <- params_for_abc_names[2] # Name of the second ABC parameter
+
+  # Ensure columns are numeric before plotting (important if accepted_samples was created as empty matrix then named)
+  accepted_samples[[param1_label]] <- as.numeric(accepted_samples[[param1_label]])
+  accepted_samples[[param2_label]] <- as.numeric(accepted_samples[[param2_label]])
+
+  # --- Marginal Posterior for Parameter 1 ---
+  # Use .data[[param_label]] for robust mapping in aes()
+  p_marginal1 <- ggplot(accepted_samples, aes(x = .data[[param1_label]])) +
+    geom_histogram(aes(y = after_stat(density)), bins = 30, fill = "skyblue", color = "black", alpha = 0.7) + # Histogram
+    geom_density(color = "blue", linewidth = 1) + # Density curve
+    geom_vline(xintercept = param1_ols_est, color = "red", linetype = "dashed", linewidth = 1) + # OLS estimate line
+    labs(title = paste("Marginal Posterior for", param1_label),
+         x = param1_label, y = "Density") +
+    # Annotate OLS estimate
+    annotate("text", x = param1_ols_est, y = max(density(accepted_samples[[param1_label]])$y)*0.05, 
+             label = "OLS Est.", vjust = 0, 
+             hjust = ifelse(param1_ols_est > median(accepted_samples[[param1_label]]), 1.1, -0.1), color = "red") +
+    theme_minimal()
+  print(p_marginal1)
+
+  # --- Marginal Posterior for Parameter 2 ---
+  p_marginal2 <- ggplot(accepted_samples, aes(x = .data[[param2_label]])) +
+    geom_histogram(aes(y = after_stat(density)), bins = 30, fill = "lightgreen", color = "black", alpha = 0.7) +
+    geom_density(color = "darkgreen", linewidth = 1) +
+    geom_vline(xintercept = param2_ols_est, color = "red", linetype = "dashed", linewidth = 1) +
+    labs(title = paste("Marginal Posterior for", param2_label),
+         x = param2_label, y = "Density") +
+    annotate("text", x = param2_ols_est, y = max(density(accepted_samples[[param2_label]])$y)*0.05, 
+             label = "OLS Est.", vjust = 0, 
+             hjust=ifelse(param2_ols_est > median(accepted_samples[[param2_label]]), 1.1, -0.1), color = "red") +
+    theme_minimal()
+  print(p_marginal2)
+
+  # --- Joint Posterior Distribution (Density Plot) ---
+  p_joint <- ggplot(accepted_samples, aes(x = .data[[param1_label]], y = .data[[param2_label]])) +
+    stat_density_2d_filled(aes(fill = after_stat(level)), geom = "polygon", contour_var = "density", bins=20) + # 2D density contours
+    # geom_point(alpha = 0.1, size=0.5, color="white") + # Optional: overlay points if few samples
+    scale_fill_viridis_d(option = "plasma") + # Color scale for density
+    # Add point for OLS estimates
+    geom_point(data=data.frame(x=param1_ols_est, y=param2_ols_est), aes(x=x, y=y), 
+               color = "red", size = 3, shape = 4, stroke=1.5) + # OLS estimate as a cross
+    annotate("text", x = param1_ols_est, y = param2_ols_est, label = " OLS Est.", 
+             color = "red", hjust = -0.1, vjust = -0.1) + # Label for OLS estimate
+    labs(title = paste("Joint Posterior Distribution for", param1_label, "and", param2_label),
+         x = param1_label, y = param2_label) +
+    theme_minimal() +
+    guides(fill="none") # Remove legend for fill
+  print(p_joint)
+  
+  # --- Joint Posterior Distribution (Scatter Plot of Accepted Samples) ---
+  p_joint_scatter <- ggplot(accepted_samples, aes(x = .data[[param1_label]], y = .data[[param2_label]])) +
+    geom_point(alpha = 0.3, color="steelblue", size=0.8) + # Scatter plot of accepted samples
+    geom_point(data=data.frame(x=param1_ols_est, y=param2_ols_est), aes(x=x, y=y), 
+               color = "red", size = 3, shape = 4, stroke=1.5) + # OLS estimate as a cross
+    annotate("text", x = param1_ols_est, y = param2_ols_est, label = " OLS Est.", 
+             color = "red", hjust = -0.1, vjust = -0.1) + # Label for OLS estimate
+    labs(title = paste("Joint Posterior Samples for", param1_label, "and", param2_label, "(Scatter)"),
+         x = param1_label, y = param2_label) +
+    theme_minimal()
+  print(p_joint_scatter)
+}
+cat("\n--- End of Task 3 ---\n")
+```

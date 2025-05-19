@@ -70,76 +70,166 @@ data_df <- data.frame(X_df, x2 = Y_matrix[, 1]) # Create a data frame with featu
 
 # Let's get an overview of the dataset.
 
-cat("========================================\n")
 cat("Dataset Overview\n")
 cat("========================================\n")
 cat("Number of Rows: ", nrow(data_df), "\n")    # Display the number of rows
 cat("Number of Columns: ", ncol(data_df), "\n") # Display the number of columns
+```
 
-cat("\n========================================\n")
+
+```{r}
 cat("Summary Statistics\n")
-cat("========================================\n")
 print(summary(data_df)) # Display summary statistics for each column (min, max, mean, quartiles)
+```
 
-cat("\n========================================\n")
+
+```{r}
 cat("Missing Values Per Column\n")
-cat("========================================\n")
 print(colSums(is.na(data_df))) # Display the count of missing values for each column
+```
 
-cat("\n========================================\n")
+
+```{r}
+
 cat("Preview (First 5 Rows)\n")
-cat("========================================\n")
 print(head(data_df, 5)) # Display the first 5 rows of the dataset
 ```
 
 1.3 Time Series Plots This chunk generates aggregated time series plots for each variable in the dataset. It uses a helper function aggregate_by_index (assumed to be defined elsewhere or in your environment) to average data points over specified chunk sizes and plot_time_series_enhanced (also assumed to be defined) for plotting. Note: chunk_size_val needs to be defined in your R Markdown environment for this code to run.
-
 ```{r}
-# 1.3 Time Series Plots - Aggregated time series plots for each variable using ggplot2
+# Check if data_df exists, if not, create a dummy one for demonstration
+if (!exists("data_df")) {
+  warning("data_df not found. Creating a dummy data frame for demonstration purposes. Please load your actual data.")
+  set.seed(123) # for reproducibility
+  n_rows <- 1000
+  data_df <- data.frame(
+    x1 = rnorm(n_rows, mean = 20, sd = 5),  # Temperature
+    x2 = rnorm(n_rows, mean = 450, sd = 50), # Net hourly electrical energy output
+    x3 = rnorm(n_rows, mean = 1000, sd = 10),# Ambient Pressure
+    x4 = rnorm(n_rows, mean = 70, sd = 15),  # Relative Humidity
+    x5 = rnorm(n_rows, mean = 50, sd = 8)    # Exhaust Vacuum
+  )
+  # Add a time index if it's not there (assuming observations are sequential)
+  data_df$time_index <- 1:nrow(data_df)
+}
+
 
 # Step 1: Define the chunk size for aggregation if it's not already defined.
 # This determines how many consecutive points are averaged to smooth the data.
 if (!exists("chunk_size_val")) {
-  chunk_size_val <- 100  # You can change this number to adjust smoothness
+  chunk_size_val <- 100  # You can change this number to adjust smoothness (e.g., 50, 100, 200)
 }
 
 # Step 2: Load required libraries
 if (!requireNamespace("ggplot2", quietly = TRUE)) install.packages("ggplot2")
 if (!requireNamespace("rlang", quietly = TRUE)) install.packages("rlang")
-library(ggplot2)
-library(rlang)  # For tidy evaluation in ggplot
+if (!requireNamespace("patchwork", quietly = TRUE)) install.packages("patchwork") # For combining plots
+if (!requireNamespace("RColorBrewer", quietly = TRUE)) install.packages("RColorBrewer") # For better color palettes
 
-# Step 3: Define a helper function to aggregate data by averaging over chunks
+library(ggplot2)
+library(rlang)     # For tidy evaluation in ggplot
+library(patchwork) # To display multiple plots together easily
+library(RColorBrewer) # For enhanced color palettes
+
+# Step 3: List of variables and their descriptive labels
+var_list <- list(
+  x1 = "Temperature X1 (°C)",
+  x2 = "Net hourly electrical energy output (MW) X2",
+  x3 = "Ambient Pressure (millibar) X3",
+  x4 = "Relative Humidity (%) X4",
+  x5 = "Exhaust Vacuum (cm Hg) X5"
+)
+
+# Define a color palette for the plots using RColorBrewer
+num_vars <- length(var_list)
+if (num_vars <= 9 && num_vars >=3) { # brewer.pal needs at least 3 colors
+    plot_colors <- brewer.pal(num_vars, "Set1") 
+} else if (num_vars < 3) {
+    plot_colors <- brewer.pal(3, "Set1")[1:num_vars] # Take first n colors if less than 3 vars
+} else {
+    # Fallback if more than 9 variables, or use a palette that supports more colors
+    plot_colors <- colorRampPalette(brewer.pal(9, "Set1"))(num_vars)
+}
+# Ensure we have enough colors, recycle if necessary (though the above should handle it for up to 9 directly)
+if (length(plot_colors) < num_vars) {
+    plot_colors <- rep(plot_colors, length.out = num_vars)
+}
+
+
+# Step 4: Display all data in raw time series plots
+cat("### Raw Time Series Plots with Trend (No Grid)\n\n")
+cat("Displaying raw time series data for each variable with a LOESS smoothed trend line...\n\n")
+
+if (!"time_index" %in% names(data_df)) {
+    data_df$time_index <- 1:nrow(data_df)
+    cat("Using row numbers as time index for raw plots.\n")
+}
+
+raw_plots_list <- list() # To store individual plots
+color_index_raw <- 1 # Initialize color index
+
+for (var_name in names(var_list)) {
+  if (var_name %in% names(data_df)) {
+    label <- var_list[[var_name]]
+    cat(paste0("Generating raw plot for: ", label, "\n"))
+    
+    current_color_raw <- plot_colors[color_index_raw]
+    
+    p_raw <- ggplot(data_df, aes(x = time_index, y = .data[[var_name]])) +
+      geom_line(color = current_color_raw, linewidth = 0.6, alpha = 0.8) + # Main data line
+      geom_smooth(method = "loess", se = FALSE, color = "grey30", linetype = "dashed", linewidth = 0.7) + # Smoothed trend line
+      labs(
+        title = paste0("Raw Time Series: ", label),
+        x = "Time Index / Observation Number",
+        y = label
+      ) +
+      theme_linedraw(base_size = 12) + # Using a different theme
+      theme(
+            plot.title = element_text(face = "bold"),
+            plot.subtitle = element_text(size = 9),
+            panel.grid.major = element_blank(), # Remove major grid lines
+            panel.grid.minor = element_blank()  # Remove minor grid lines
+      )
+    
+    print(p_raw) 
+    raw_plots_list[[var_name]] <- p_raw 
+    cat("\n\n")
+    
+    color_index_raw <- color_index_raw + 1
+    if (color_index_raw > length(plot_colors)) color_index_raw <- 1 # Recycle colors if more vars than palette colors
+    
+  } else {
+    cat(paste0("Warning: Variable '", var_name, "' not found in data_df. Skipping raw plot.\n"))
+  }
+}
+
+
+# Step 5: Define a helper function to aggregate data by averaging over chunks
 aggregate_by_index <- function(df, value_col_name, new_aggregated_value_col_name, new_index_col_name, chunk_size) {
-  
-  # Calculate how many full chunks we can get from the data
+  if (!value_col_name %in% names(df)) {
+    stop(paste("Column", value_col_name, "not found in the data frame."))
+  }
   num_chunks <- floor(nrow(df) / chunk_size)
-  
-  # Trim data frame to contain only full chunks (discard leftover rows)
-  df <- df[1:(num_chunks * chunk_size), ]
-  
-  # Create a new index that groups every 'chunk_size' rows into one chunk number
-  df[[new_index_col_name]] <- rep(1:num_chunks, each = chunk_size)
-  
-  # Aggregate the values by chunk using mean (average)
-  agg_df <- aggregate(df[[value_col_name]], by = list(df[[new_index_col_name]]), FUN = mean)
-  
-  # Rename columns of the aggregated data frame
+  if (num_chunks == 0) {
+    warning(paste0("Not enough data for even one chunk of size ", chunk_size, " for variable '", value_col_name, "'. Returning empty aggregated data frame."))
+    empty_agg_df <- data.frame(matrix(ncol = 2, nrow = 0))
+    names(empty_agg_df) <- c(new_index_col_name, new_aggregated_value_col_name)
+    return(empty_agg_df)
+  }
+  df_trimmed <- df[1:(num_chunks * chunk_size), ]
+  df_trimmed[[new_index_col_name]] <- rep(1:num_chunks, each = chunk_size)
+  if (!is.numeric(df_trimmed[[value_col_name]])) {
+      stop(paste("Column", value_col_name, "must be numeric for aggregation."))
+  }
+  agg_df <- aggregate(df_trimmed[[value_col_name]], by = list(df_trimmed[[new_index_col_name]]), FUN = mean, na.rm = TRUE)
   names(agg_df) <- c(new_index_col_name, new_aggregated_value_col_name)
-  
   return(agg_df)
 }
 
-# Step 4: Define a function to generate plots for each variable
-# This function aggregates the data and plots it with ggplot2
-generate_aggregated_plot <- function(var_name, label) {
-  
-  cat(paste0("### Aggregated Time Series Plot: ", label, "\n\n"))  # Print section header
-  
-  # Name for the aggregated value column
+# Step 6: Define a function to generate plots for each variable (aggregated)
+generate_aggregated_plot <- function(var_name, label, color_arg) {
+  cat(paste0("### Aggregated Time Series Plot (No Grid): ", label, "\n\n")) 
   new_val_col <- paste0(var_name, "_agg")
-  
-  # Aggregate the data for this variable
   agg_df <- aggregate_by_index(
     df = data_df,
     value_col_name = var_name,
@@ -148,35 +238,55 @@ generate_aggregated_plot <- function(var_name, label) {
     chunk_size = chunk_size_val
   )
   
-  # Create the plot with ggplot2
-  p <- ggplot(agg_df, aes(x = index_agg, y = !!sym(new_val_col))) +  # Use tidy eval to refer to the column
-    geom_line(color = "#2C3E50", linewidth = 1) +  # Line plot with custom color and thickness
+  if (nrow(agg_df) == 0) {
+      cat(paste0("Skipping aggregated plot for '", label, "' as no data was aggregated.\n\n"))
+      return(invisible(NULL)) # Return NULL invisibly if no plot
+  }
+  
+  p <- ggplot(agg_df, aes(x = index_agg, y = !!sym(new_val_col))) +
+    geom_line(color = color_arg, linewidth = 1.2) + 
+    geom_point(color = color_arg, size = 2, alpha = 0.6) + # Optionally add points
     labs(
-      title = paste0(label, " (", chunk_size_val, "-point average)"),
+      title = paste0("Aggregated Time Series: ", label),
+      subtitle = paste0("Data aggregated using a ", chunk_size_val, "-point moving average"),
       x = "Aggregated Index (Chunks)",
-      y = label
+      y = paste("Average", label)
     ) +
-    theme_minimal(base_size = 13)  # Clean theme with readable font size
+    theme_linedraw(base_size = 12) +
+    theme(
+        plot.title = element_text(face = "bold"),
+        plot.subtitle = element_text(size = 9),
+        panel.grid.major = element_blank(), # Remove major grid lines
+        panel.grid.minor = element_blank()  # Remove minor grid lines
+    )
   
-  print(p)  # Display the plot
-  
-  cat("\n\n")  # Add spacing after plot output
+  print(p)
+  cat("\n\n")
+  return(invisible(p)) # Return the plot invisibly
 }
 
-# Step 5: List of variables and their descriptive labels
-var_list <- list(
-  x2 = "Net hourly electrical energy output (MW) X2",
-  x1 = "Temperature X1 (°C)",
-  x3 = "Ambient Pressure (millibar) X3",
-  x4 = "Relative Humidity (%) X4",
-  x5 = "Exhaust Vacuum (cm Hg) X5"
-)
+# Step 7: Loop through each variable to generate its aggregated plot
+cat(paste0("Generating aggregated plots with chunk size: ", chunk_size_val, "\n\n"))
 
-# Step 6: Loop through each variable to generate its aggregated plot
-for (v in names(var_list)) {
-  generate_aggregated_plot(v, var_list[[v]])
+aggregated_plots_list <- list() # To store aggregated plots for potential combination
+color_index_agg <- 1 
+
+for (v_name in names(var_list)) {
+  if (v_name %in% names(data_df)) {
+    current_color_agg <- plot_colors[color_index_agg]
+    plot_obj <- generate_aggregated_plot(v_name, var_list[[v_name]], current_color_agg)
+    if (!is.null(plot_obj)) {
+        aggregated_plots_list[[v_name]] <- plot_obj
+    }
+    color_index_agg <- color_index_agg + 1
+    if (color_index_agg > length(plot_colors)) color_index_agg <- 1 # Recycle colors
+  } else {
+    cat(paste0("Warning: Variable '", v_name, "' not found in data_df. Skipping aggregated plot.\n"))
+  }
 }
 
+
+cat("Processing complete. All plots generated.\n")
 
 
 ```
@@ -199,11 +309,11 @@ plot_histogram_with_density <- function(df, variable, var_name, xlab_label = var
 }
 
 # Plot distributions for each variable
-plot_histogram_with_density(data_df, "x1", "Temperature (°C)", binwidth_val = 1)
-plot_histogram_with_density(data_df, "x2", "Net hourly electrical energy output (MW)", color_fill = "lightgreen", binwidth_val = 1)
-plot_histogram_with_density(data_df, "x3", "Ambient Pressure (millibar)", color_fill = "lightcoral", binwidth_val = 1)
-plot_histogram_with_density(data_df, "x4", "Relative Humidity (%)", color_fill = "lightsalmon", binwidth_val = 1)
-plot_histogram_with_density(data_df, "x5", "Exhaust Vacuum (cm Hg)", color_fill = "lightcyan", binwidth_val = 1)
+plot_histogram_with_density(data_df, "x1", "Temperature (°C) X1", binwidth_val = 1)
+plot_histogram_with_density(data_df, "x2", "Net hourly electrical energy output (MW) X2", color_fill = "lightgreen", binwidth_val = 1)
+plot_histogram_with_density(data_df, "x3", "Ambient Pressure (millibar) X3", color_fill = "lightcoral", binwidth_val = 1)
+plot_histogram_with_density(data_df, "x4", "Relative Humidity (%) X4", color_fill = "lightsalmon", binwidth_val = 1)
+plot_histogram_with_density(data_df, "x5", "Exhaust Vacuum (cm Hg) X5", color_fill = "lightcyan", binwidth_val = 1)
 ```
 
 1.5 Correlation and Scatter Plots This section first calculates and prints the correlation matrix for all variables in data_df. Then, it visualizes this matrix using corrplot. After that, it generates individual scatter plots to show the relationship between each predictor and the output variable (x2).
@@ -287,10 +397,6 @@ First, the response variable y_response is defined, and then a list model_defini
 
 ```{r}
 # --- Task 2: Regression – Modelling the Relationship ---
-
-# We aim to find a suitable mathematical model (from 5 candidates)
-# explaining the relationship between the input variables and
-# the net hourly electrical energy output (y = x2).
 
 # The candidate models are:
 #   Model 1: y = θ₁·x₄ + θ₂·x₃² + θ_bias
@@ -585,7 +691,6 @@ BIC_values_dynamic <- sapply(aic_bic_list_all_models, function(model) model$BIC)
 
 # Ensure the order of model_names_dynamic matches AIC_values_dynamic and BIC_values_dynamic
 # This should be the case if aic_bic_list_all_models was created with model names as keys
-# For safety, explicitly use names from the sapply output if available and consistent
 if (!is.null(names(AIC_values_dynamic))) {
     model_names_dynamic <- names(AIC_values_dynamic)
 }
@@ -611,11 +716,11 @@ if (all(is.na(BIC_values_dynamic))) {
 }
 
 
-# If both criteria agree (and are not NA), select that model; otherwise decide accordingly
+# If both criteria agree (and are not NA), select that model
 if (!is.na(best_model_AIC_dynamic) && !is.na(best_model_BIC_dynamic) && best_model_AIC_dynamic == best_model_BIC_dynamic) {
   best_model_name <- best_model_AIC_dynamic
 } else if (!is.na(best_model_AIC_dynamic)) {
-  # If they differ or BIC is NA, you can choose one or explain the reasoning
+  # If they differ or BIC is NA, choose one or explain the reasoning
   best_model_name <- best_model_AIC_dynamic  # choosing based on AIC here as a default
   if (!is.na(best_model_BIC_dynamic) && best_model_AIC_dynamic != best_model_BIC_dynamic) {
     cat("Note: AIC and BIC suggest different best models. AIC suggests:", best_model_AIC_dynamic, 
@@ -645,11 +750,6 @@ if (!is.na(best_model_name)) {
     #   cat("Warning: Automatic model selection failed. Defaulting to 'model5' to allow script progression.\n")
     # }
 }
-
-
-# The following is a placeholder for your detailed justification.
-# You should replace this with your textual analysis based on AIC, BIC,
-# and the Q-Q plots of residuals from section 2.5.
 
 cat("\n--- Model Selection Justification --- \n")
 cat("Based on the information criteria and residual analysis:\n")
